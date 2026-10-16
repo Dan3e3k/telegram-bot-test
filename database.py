@@ -21,6 +21,18 @@ def init_db():
                 is_sent INTEGER NOT NULL DEFAULT 0
             )
         """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER NOT NULL,
+                username TEXT,
+                name TEXT NOT NULL,
+                contact TEXT NOT NULL,
+                description TEXT NOT NULL,
+                voice_file_id TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
 
         connection.commit()
     finally:
@@ -106,5 +118,48 @@ def delete_reminder(reminder_id, telegram_id):
 
         connection.commit()
         return cursor.rowcount == 1
+    finally:
+        connection.close()
+
+from datetime import datetime
+
+
+def save_order(
+    telegram_id,
+    username,
+    name,
+    contact,
+    description,
+    voice_file_id=None,
+):
+    """Сохраняет заявку клиента в базу данных."""
+
+    connection = sqlite3.connect(DB_PATH)
+
+    try:
+        cursor = connection.execute("""
+            INSERT INTO orders (
+                telegram_id,
+                username,
+                name,
+                contact,
+                description,
+                voice_file_id,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            telegram_id,
+            username,
+            name,
+            contact,
+            description,
+            voice_file_id,
+            datetime.now().isoformat(timespec="seconds"),
+        ))
+
+        connection.commit()
+        return cursor.lastrowid
+
     finally:
         connection.close()

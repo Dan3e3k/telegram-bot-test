@@ -2,7 +2,6 @@ from database import init_db, save_order
 import asyncio
 import os
 from pathlib import Path
-
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, F
@@ -33,10 +32,17 @@ if not TOKEN:
         f"Не найден BOT_TOKEN. Проверь файл: {env_path}"
     )
 
-OWNER_ID = 729052410  # Telegram ID администратора
+# ADMIN_ID берём из .env. Если его там нет, используем ID владельца.
+# Значение задаётся до импорта admin.py, чтобы оба файла видели один ID.
+OWNER_ID = int(os.getenv("ADMIN_ID", "729052410"))
+os.environ.setdefault("ADMIN_ID", str(OWNER_ID))
+
+# Импортируем админ-роутер только после загрузки переменных окружения.
+from admin import router as admin_router, ADMIN_ID, admin_menu, prepare_db
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+dp.include_router(admin_router)
 
 
 # =========================
@@ -53,14 +59,22 @@ class OrderForm(StatesGroup):
 # КЛАВИАТУРЫ
 # =========================
 
-menu = ReplyKeyboardMarkup(
-    keyboard=[
+def get_main_keyboard(user_id: int):
+    """Обычное меню для клиентов; админ-кнопка — только владельцу."""
+    buttons = [
         [KeyboardButton(text="🤖 Создание бота")],
         [KeyboardButton(text="💰 Стоимость услуг")],
         [KeyboardButton(text="📝 Оставить заявку")],
-    ],
-    resize_keyboard=True,
-)
+    ]
+
+    # ADMIN_ID уже загружен из .env до импорта admin.py.
+    if user_id == OWNER_ID:
+        buttons.append([KeyboardButton(text="🔐 Админ-панель")])
+
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True,
+    )
 
 confirm_keyboard = InlineKeyboardMarkup(
     inline_keyboard=[
@@ -182,7 +196,26 @@ async def start(message: Message, state: FSMContext):
         "Посмотрите услуги или расскажите, какой бот нужен "
         "именно вам.\n"
         "Выберите действие в меню ниже 👇",
-        reply_markup=menu,
+        reply_markup=get_main_keyboard(message.from_user.id),
+    )
+
+
+@dp.message(F.text == "🔐 Админ-панель")
+async def admin_panel_button(message: Message):
+    if not message.from_user or message.from_user.id != OWNER_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
+
+    try:
+        prepare_db()
+    except Exception as error:
+        await message.answer(f"Не удалось открыть базу данных: {error}")
+        return
+
+    await message.answer(
+        "🔐 <b>Панель администратора</b>\n\nВыбери раздел:",
+        reply_markup=admin_menu(),
+        parse_mode="HTML",
     )
 
 
@@ -192,7 +225,7 @@ async def cancel(message: Message, state: FSMContext):
 
     await message.answer(
         "Заявка отменена.",
-        reply_markup=menu,
+        reply_markup=get_main_keyboard(message.from_user.id),
     )
 
 
@@ -537,22 +570,13 @@ async def confirm_order(
         )
         return
 
-    except Exception as error:
-        print(f"Ошибка отправки заявки: {error}")
-
-        await callback.answer(
-            "Не удалось отправить заявку. Попробуй ещё раз.",
-            show_alert=True,
-        )
-        return
-
     await state.clear()
 
     await callback.message.edit_reply_markup(reply_markup=None)
 
     await callback.message.answer(
         "✅ Спасибо! Заявка отправлена. Скоро с тобой свяжутся.",
-        reply_markup=menu,
+        reply_markup=get_main_keyboard(callback.from_user.id),
     )
 
     await callback.answer("Заявка отправлена!")
